@@ -26,6 +26,12 @@ BUILD_C68K = 1
 BUILD_M68K = 1
 USE_LIBAO = 1
 
+# Uncomment to build for OD BETA
+OD_BETA = 1
+
+# Choose profiling phase (PHASE = 1 or 2, 0 is inactive)
+OD_PROFILE = 0
+
 #
 #	Specify paths/files
 #
@@ -102,7 +108,7 @@ alldir	= burn \
 		dep/generated \
 		sdl-dingux
 
-incdir	= $(foreach dir,$(alldir),-I$(srcdir)$(dir)) -I$(objdir)dep/generated -I../avir-2.5 -I../png++-0.2.9/output/include -I../json_include/single_include -I../boost_1_73_0
+incdir	= $(foreach dir,$(alldir),-I$(srcdir)$(dir)) -I$(objdir)dep/generated -I../../libs/avir-2.5 -I../../libs/png++-0.2.9/output/include -I../../libs/json_include/single_include
 
 lib = -lstdc++ -lSDL -lSDL_image -lz -lpng
 
@@ -320,17 +326,18 @@ alldep	= $(foreach file,$(autobj:.o=.c), \
 #
 #
 
-HOSTCC = gcc
-HOSTCXX = g++
-CC	= /opt/gcw0-toolchain/usr/bin/mipsel-gcw0-linux-uclibc-gcc
-CXX	= /opt/gcw0-toolchain/usr/bin/mipsel-gcw0-linux-uclibc-g++
-LD	= $(CXX)
-AS	= /opt/gcw0-toolchain/usr/bin/mipsel-gcw0-linux-uclibc-as
+HOSTCC   = gcc
+HOSTCXX  = g++
+CC	     = /opt/gcw0-toolchain/usr/bin/mipsel-gcw0-linux-uclibc-gcc
+CXX	     = /opt/gcw0-toolchain/usr/bin/mipsel-gcw0-linux-uclibc-g++
+LD	     = $(CXX)
+AS	     = /opt/gcw0-toolchain/usr/bin/mipsel-gcw0-linux-uclibc-as
+HUGEEDIT = /opt/gcw0-toolchain/usr/bin/hugeedit
 
 HOSTCFLAGS = $(incdir)
-CFLAGS   = -O2 -G0 -mips32r2 -pipe -fno-builtin -fno-common -mno-shared -ffast-math \
+CFLAGS   = -mips32r2 -pipe -fno-builtin -fno-common -mno-shared -ffast-math \
 		-fomit-frame-pointer -fexpensive-optimizations -Wno-write-strings -DLSB_FIRST
-CXXFLAGS = -std=gnu++11 -O2 -G0 -mips32r2 -pipe -fno-builtin -fno-common -mno-shared -ffast-math \
+CXXFLAGS = -std=gnu++11 -mips32r2 -pipe -fno-builtin -fno-common -mno-shared -ffast-math \
 		-fomit-frame-pointer -fexpensive-optimizations -Wno-write-strings -DLSB_FIRST
 
 CFLAGS += -D__cdecl="" -D__fastcall="" -Wno-narrowing
@@ -363,9 +370,11 @@ endif
 DEF += -DFILENAME=$(NAME)
 
 ifdef DEBUG
-	CFLAGS		+= -g
-	CXXFLAGS	+= -g
+	CFLAGS		+= -g3 -O0
+	CXXFLAGS	+= -g3 -O0
 else
+	CFLAGS		+= -Ofast
+	CXXFLAGS	+= -Ofast
 	LDFLAGS		+= -s
 endif
 
@@ -373,6 +382,19 @@ CFLAGS += $(DEF) $(incdir)
 CXXFLAGS += $(DEF) $(incdir)
 LDFLAGS +=
 ASFLAGS = -I$(incdir) -O1 -G0
+
+# Set HOSTLDFLAGS before RG350 specialization
+HOSTLDFLAGS := $(LDFLAGS)
+
+# Add specific RG350 CPU optimizations
+RG350_CFLAGS = -fdata-sections -ffunction-sections -mframe-header-opt -mno-fp-exceptions -mno-check-zero-division -fsingle-precision-constant -fno-common -march=mips32r2 -mtune=mips32r2 -flto -mno-shared -mplt
+CFLAGS += $(RG350_CFLAGS) 
+CXXFLAGS += $(RG350_CFLAGS)
+LDFLAGS += -Wl,--as-needed -Wl,--gc-sections -flto
+ifdef OD_BETA
+	# Add specific RG350 CPU optimizations (BETA FIRMWARE)
+	LDFLAGS += -Wl,-zcommon-page-size=2097152 -Wl,-zmax-page-size=2097152 -lhugetlbfs
+endif
 
 #
 #
@@ -425,6 +447,9 @@ $(NAME):	$(allobj)
 	@echo Linking executable $(NAME)...
 	@mkdir -p bin
 	$(LD) $(CFLAGS) $(LDFLAGS) -o bin/$@ $^ $(lib)
+	@if [ "${OD_BETA}" = "1" ]; then\
+        $(HUGEEDIT) --text --data bin/$@;\
+    fi
 	@mkdir -p bin/skin
 	@cp src/sdl-dingux/skin/*.png bin/skin/
 endif
@@ -458,7 +483,7 @@ endif
 ifdef	BUILD_A68K
 $(a68k.o): fba_make68k.c
 	@echo Compiling A68K MC68000 core...
-	@$(HOSTCC) $(HOSTCFLAGS) $(LDFLAGS) -DWIN32 -Wno-unused -Wno-conversion -Wno-missing-prototypes \
+	@$(HOSTCC) $(HOSTCFLAGS) $(HOSTLDFLAGS) -DWIN32 -Wno-unused -Wno-conversion -Wno-missing-prototypes \
 		-s $< -o $(objdir)dep/generated/fba_make68k
 	$(objdir)dep/generated/fba_make68k $(@:.o=.s) $(@D)/a68ktbl.inc
 	@echo Assembling A68K MC68000 core...
@@ -492,7 +517,7 @@ ctv.d ctv.o:	$(ctv.h)
 
 $(ctv.h):	ctv_make.cpp
 	@echo Generating $(srcdir)dep/generated/$(@F)...
-	@$(HOSTCXX) $(LDFLAGS) $< -o $(objdir)dep/generated/ctv_make
+	@$(HOSTCXX) $(HOSTLDFLAGS) $< -o $(objdir)dep/generated/ctv_make
 	@$(objdir)dep/generated/ctv_make >$@
 
 #
@@ -548,7 +573,7 @@ pgm_draw.d pgm_draw.o:	$(pgm_sprite.h)
 
 $(pgm_sprite.h):	pgm_sprite_create.cpp
 	@echo Generating $(srcdir)dep/generated/$(@F)...
-	@$(HOSTCXX) $(LDFLAGS) $< -o $(objdir)dep/generated/pgm_sprite_create
+	@$(HOSTCXX) $(HOSTLDFLAGS) $< -o $(objdir)dep/generated/pgm_sprite_create
 	@$(objdir)dep/generated/pgm_sprite_create >$@
 
 ifeq ($(MAKELEVEL),1)
